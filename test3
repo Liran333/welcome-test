@@ -19,3 +19,47 @@ func main() {
 
 	framework.Run(r, o.service)
 }
+
+func (bot *robot) getMaintainers(org, repo, sigName string, number int, config *botConfig, log *logrus.Entry) ([]string, []string, error) {
+	if config.WelcomeSimpler {
+		membersToContact, err := bot.findSpecialContact(org, repo, number, config, log)
+		if err == nil && len(membersToContact) != 0 {
+			return membersToContact.UnsortedList(), nil, nil
+		}
+	}
+
+	v, err := bot.cli.ListCollaborator(gc.PRInfo{Org: org, Repo: repo})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	r := make([]string, 0, len(v))
+	for i := range v {
+		p := v[i].Permissions
+		if p != nil {
+			for j := range p {
+				if (j == "push" || j == "maintain") && p[j] {
+					r = append(r, v[i].GetLogin())
+				}
+			}
+		}
+	}
+
+	// check OWNERS file
+	_, err = bot.cli.GetPathContent(config.CommunityName, config.CommunityRepo,
+		fmt.Sprintf("sig/%s/OWNERS", sigName), "master")
+	if err != nil {
+		// OWNERS not exist, load sig-info.yaml
+		f, err := bot.cli.GetPathContent(config.CommunityName, config.CommunityRepo,
+			fmt.Sprintf("sig/%s/sig-info.yaml", sigName), "master")
+		if err != nil {
+			return r, nil, err
+		}
+
+		maintainers, committers := decodeSigInfoFile(*f.Content)
+		return maintainers.UnsortedList(), committers.UnsortedList(), nil
+	}
+
+	return r, nil, nil
+}
+
