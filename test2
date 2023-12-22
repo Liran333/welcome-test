@@ -1,0 +1,24 @@
+func genLGTMLabel(commenter string, lgtmCount uint) string {
+	if lgtmCount <= 1 {
+		return lgtmLabel
+	}
+
+	l := fmt.Sprintf("%s-%s", lgtmLabel, strings.ToLower(commenter))
+	if len(l) > labelLenLimit {
+		return l[:labelLenLimit]
+	}
+
+	return l
+}
+
+func getLGTMLabelsOnPR(labels sets.String) []string {
+	var r []string
+
+	for l := range labels {
+		if strings.HasPrefix(l, lgtmLabel) {
+			r = append(r, l)
+		}
+	}
+
+	return r
+}
