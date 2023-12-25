@@ -1,0 +1,65 @@
+func main() {
+	logrusutil.ComponentInit(botName)
+
+	o := gatherOptions(flag.NewFlagSet(os.Args[0], flag.ExitOnError), os.Args[1:]...)
+	if err := o.Validate(); err != nil {
+		logrus.WithError(err).Fatal("Invalid options")
+	}
+
+	secretAgent := new(secret.Agent)
+	if err := secretAgent.Start([]string{o.github.TokenPath}); err != nil {
+		logrus.WithError(err).Fatal("Error starting secret agent.")
+	}
+
+	defer secretAgent.Stop()
+
+	c := githubclient.NewClient(secretAgent.GetTokenGenerator(o.github.TokenPath))
+
+	r := newRobot(c)
+
+	framework.Run(r, o.service)
+}
+
+func (bot *robot) getMaintainers(org, repo, sigName string, number int, config *botConfig, log *logrus.Entry) ([]string, []string, error) {
+	if config.WelcomeSimpler {
+		membersToContact, err := bot.findSpecialContact(org, repo, number, config, log)
+		if err == nil && len(membersToContact) != 0 {
+			return membersToContact.UnsortedList(), nil, nil
+		}
+	}
+
+	v, err := bot.cli.ListCollaborator(gc.PRInfo{Org: org, Repo: repo})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	r := make([]string, 0, len(v))
+	for i := range v {
+		p := v[i].Permissions
+		if p != nil {
+			for j := range p {
+				if (j == "push" || j == "maintain") && p[j] {
+					r = append(r, v[i].GetLogin())
+				}
+			}
+		}
+	}
+
+	// check OWNERS file
+	_, err = bot.cli.GetPathContent(config.CommunityName, config.CommunityRepo,
+		fmt.Sprintf("sig/%s/OWNERS", sigName), "master")
+	if err != nil {
+		// OWNERS not exist, load sig-info.yaml
+		f, err := bot.cli.GetPathContent(config.CommunityName, config.CommunityRepo,
+			fmt.Sprintf("sig/%s/sig-info.yaml", sigName), "master")
+		if err != nil {
+			return r, nil, err
+		}
+
+		maintainers, committers := decodeSigInfoFile(*f.Content)
+		return maintainers.UnsortedList(), committers.UnsortedList(), nil
+	}
+
+	return r, nil, nil
+}
+
